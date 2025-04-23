@@ -37,8 +37,6 @@ import {
   faPlusCircle,
   faCopy,
   faEraser,
-  faCheck,
-  faTimes,
   faSun,
   faMoon,
   faSpinner,
@@ -55,39 +53,12 @@ type Recipe = {
   name: string;
   ingredients: RecipeIngredient[];
   instructions: string;
-  isCustom: boolean;
 };
-
-// Pre-populated standard recipes
-const STANDARD_RECIPES: Recipe[] = [
-  {
-    id: -1,
-    name: "Margarita",
-    isCustom: false,
-    ingredients: [
-      { name: "Tequila", quantity: "2", unit: "oz" },
-      { name: "Lime Juice", quantity: "1", unit: "oz" },
-      { name: "Triple Sec", quantity: "1", unit: "oz" },
-    ],
-    instructions: "Shake with ice and strain into a salt-rimmed glass.",
-  },
-  {
-    id: -2,
-    name: "Old Fashioned",
-    isCustom: false,
-    ingredients: [
-      { name: "Bourbon", quantity: "2", unit: "oz" },
-      { name: "Simple Syrup", quantity: "0.5", unit: "oz" },
-      { name: "Angostura Bitters", quantity: "2", unit: "dashes" },
-    ],
-    instructions: "Stir with ice and strain into a rocks glass.",
-  },
-];
 
 // State management
 type State = {
   ingredients: Ingredient[];
-  customRecipes: Recipe[];
+  recipes: Recipe[];
   loading: boolean;
   error: string | null;
 };
@@ -103,7 +74,7 @@ type Action =
 
 const initialState: State = {
   ingredients: [],
-  customRecipes: [],
+  recipes: [],
   loading: true,
   error: null,
 };
@@ -131,21 +102,19 @@ const reducer = (state: State, action: Action): State => {
         ingredients: state.ingredients.filter((i) => i.id !== action.payload),
       };
     case "SET_RECIPES":
-      return { ...state, customRecipes: action.payload, loading: false };
+      return { ...state, recipes: action.payload, loading: false };
     case "ADD_RECIPE":
-      if (state.customRecipes.some((r) => r.id === action.payload.id)) {
+      if (state.recipes.some((r) => r.id === action.payload.id)) {
         return state;
       }
       return {
         ...state,
-        customRecipes: [...state.customRecipes, action.payload],
+        recipes: [...state.recipes, action.payload],
       };
     case "REMOVE_RECIPE":
       return {
         ...state,
-        customRecipes: state.customRecipes.filter(
-          (r) => r.id !== action.payload
-        ),
+        recipes: state.recipes.filter((r) => r.id !== action.payload),
       };
     default:
       return state;
@@ -252,7 +221,7 @@ const IngredientManager: React.FC = () => {
   };
 
   const availableSuggestions = useMemo(() => {
-    const allRecipes = [...STANDARD_RECIPES, ...state.customRecipes];
+    const allRecipes = state.recipes;
     const allRecipeIngredientNames = new Set<string>();
     allRecipes.forEach((recipe) => {
       recipe.ingredients.forEach((ing) => {
@@ -278,7 +247,7 @@ const IngredientManager: React.FC = () => {
     suggestions.sort((a, b) => a.localeCompare(b));
 
     return suggestions;
-  }, [state.ingredients, state.customRecipes]);
+  }, [state.ingredients, state.recipes]);
 
   return (
     <Card className="mb-4">
@@ -588,12 +557,8 @@ const RecipeBrowser: React.FC = () => {
   const { state } = useContext(AppContext);
   const [search, setSearch] = useState("");
   const [showMakeable, setShowMakeable] = useState(false);
-  const allRecipes = useMemo(
-    () => [...STANDARD_RECIPES, ...state.customRecipes],
-    [state.customRecipes]
-  );
   const filteredRecipes = useRecipeFilter(
-    allRecipes,
+    state.recipes,
     state.ingredients,
     search,
     showMakeable
@@ -626,9 +591,10 @@ const RecipeBrowser: React.FC = () => {
       </InputGroup>
       <Row xs={1} md={2} lg={3} className="g-4">
         {filteredRecipes.map((recipe) => {
+          const canMake = recipe.ingredients.every((ri) => hasIngredient(ri.name));
           return (
             <Col key={recipe.id}>
-              <Card>
+              <Card border={canMake ? "success" : undefined}>
                 <Card.Body>
                   <Card.Title>{recipe.name}</Card.Title>
                   <ListGroup variant="flush" className="mb-2">
@@ -637,25 +603,12 @@ const RecipeBrowser: React.FC = () => {
                       return (
                         <ListGroup.Item
                           key={index}
-                          className="d-flex justify-content-between align-items-center"
+                          className={`d-flex justify-content-between align-items-center ${userHasIngredient ? '' : 'text-muted'}`}
                         >
                           <span>
                             {ingredient.quantity} {ingredient.unit}{" "}
                             {ingredient.name}
                           </span>
-                          {userHasIngredient ? (
-                            <FontAwesomeIcon
-                              icon={faCheck}
-                              className="text-success"
-                              title="You have this"
-                            />
-                          ) : (
-                            <FontAwesomeIcon
-                              icon={faTimes}
-                              className="text-danger"
-                              title="Missing ingredient"
-                            />
-                          )}
                         </ListGroup.Item>
                       );
                     })}
@@ -685,12 +638,12 @@ interface RecipeManagerProps {
 
 const RecipeManager: React.FC<RecipeManagerProps> = ({ onEdit }) => {
   const { state, dispatch } = useContext(AppContext);
-  const allRecipes = useMemo(
+  const sortedRecipes = useMemo(
     () =>
-      [...STANDARD_RECIPES, ...state.customRecipes].sort((a, b) =>
+      [...state.recipes].sort((a, b) =>
         a.name.localeCompare(b.name)
       ),
-    [state.customRecipes]
+    [state.recipes]
   );
 
   const removeRecipe = async (id: number) => {
@@ -719,19 +672,12 @@ const RecipeManager: React.FC<RecipeManagerProps> = ({ onEdit }) => {
           Recipe Management
         </Card.Title>
         <ListGroup style={{ maxHeight: "400px", overflowY: "auto" }}>
-          {allRecipes.map((recipe) => (
+          {sortedRecipes.map((recipe) => (
             <ListGroup.Item
               key={recipe.id}
               className="d-flex justify-content-between align-items-center"
             >
-              <span>
-                {recipe.name}{" "}
-                {!recipe.isCustom && (
-                  <Badge bg="info" text="dark" pill className="ms-2">
-                    Std
-                  </Badge>
-                )}
-              </span>
+              <span>{recipe.name}</span>
               <Stack direction="horizontal" gap={1}>
                 <Button
                   variant="outline-primary"
@@ -741,22 +687,20 @@ const RecipeManager: React.FC<RecipeManagerProps> = ({ onEdit }) => {
                 >
                   <FontAwesomeIcon icon={faCopy} />
                 </Button>
-                {recipe.isCustom && (
-                  <Button
-                    variant="outline-danger"
-                    size="sm"
-                    onClick={() => removeRecipe(recipe.id)}
-                    title="Delete"
-                  >
-                    <FontAwesomeIcon icon={faTrash} />
-                  </Button>
-                )}
+                <Button
+                  variant="outline-danger"
+                  size="sm"
+                  onClick={() => removeRecipe(recipe.id)}
+                  title="Delete"
+                >
+                  <FontAwesomeIcon icon={faTrash} />
+                </Button>
               </Stack>
             </ListGroup.Item>
           ))}
-          {allRecipes.length === 0 && (
+          {sortedRecipes.length === 0 && (
             <ListGroup.Item className="text-muted">
-              No recipes available.
+              No recipes available. Add some using the creator above or check the backend.
             </ListGroup.Item>
           )}
         </ListGroup>
@@ -818,22 +762,48 @@ const App: React.FC = () => {
           fetch(`${API_BASE_URL}/recipes`),
         ]);
 
-        if (!ingredientsRes.ok) {
-          throw new Error(
-            `Failed to fetch ingredients: ${ingredientsRes.statusText}`
-          );
-        }
-        if (!recipesRes.ok) {
-          throw new Error(`Failed to fetch recipes: ${recipesRes.statusText}`);
-        }
+        // Helper function to process response
+        const processResponse = async (response: Response, resourceName: string) => {
+          if (!response.ok) {
+            // Try to get more specific error from backend if possible
+            let errorMsg = `Failed to fetch ${resourceName}: ${response.status} ${response.statusText}`;
+            try {
+              const errorData = await response.json();
+              errorMsg = errorData.error || errorMsg;
+            } catch (e) {
+              // If response is not JSON, maybe it's HTML?
+              const textError = await response.text();
+              if (textError.toLowerCase().includes("<!doctype html")) {
+                 errorMsg += ". Received HTML instead of JSON. Check API endpoint and proxy configuration.";
+              } else {
+                 errorMsg += `. Response body: ${textError.substring(0, 100)}...`; // Show snippet
+              }
+            }
+            throw new Error(errorMsg);
+          }
 
-        const ingredientsData: Ingredient[] = await ingredientsRes.json();
-        const recipesData: Recipe[] = await recipesRes.json();
+          // Check content type before parsing
+          const contentType = response.headers.get("content-type");
+          if (contentType && contentType.includes("application/json")) {
+            return await response.json();
+          } else {
+            // Handle cases where the server responded with 2xx but not JSON
+            const responseText = await response.text();
+             if (responseText.toLowerCase().includes("<!doctype html")) {
+               throw new Error(`Received HTML instead of JSON for ${resourceName}. Check API endpoint and proxy configuration.`);
+             }
+             throw new Error(`Expected JSON for ${resourceName}, but received: ${contentType || 'unknown content type'}. Response: ${responseText.substring(0,100)}...`);
+          }
+        };
+
+        const ingredientsData: Ingredient[] = await processResponse(ingredientsRes, 'ingredients');
+        const recipesData: Recipe[] = await processResponse(recipesRes, 'recipes');
 
         dispatch({ type: "SET_INGREDIENTS", payload: ingredientsData });
         dispatch({ type: "SET_RECIPES", payload: recipesData });
       } catch (error: any) {
         console.error("Error fetching initial data:", error);
+        // Use the potentially more specific error message from processResponse
         dispatch({ type: "SET_ERROR", payload: error.message });
       }
     };
@@ -869,9 +839,9 @@ const App: React.FC = () => {
         {state.error && !state.loading && (
           <div className="alert alert-danger" role="alert">
             <strong>Error:</strong> {state.error} <br />
-            Please ensure the backend server is running and accessible at{" "}
-            <code>{API_BASE_URL}</code>. You might need to refresh the page
-            once the server is ready.
+            Please ensure the backend server is running (locally or in Docker) and accessible.
+            If running the frontend locally (e.g., with `npm run dev`), ensure the development server's proxy is correctly configured to forward requests from <code>{API_BASE_URL}</code> to the backend.
+            You might need to refresh the page once the server and proxy are ready.
           </div>
         )}
 

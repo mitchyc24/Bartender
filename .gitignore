@@ -1,3 +1,13 @@
 node_modules/
+build/
+coverage/
+*.log
+
+# Environment variables
+.env
+server/.env # Specifically ignore server .env
+
+# Docker
+docker-compose.override.yml
 
 

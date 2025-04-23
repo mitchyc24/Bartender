@@ -1,0 +1,73 @@
+services:
+  # Frontend Service (React App served by Nginx)
+  client:
+    build:
+      context: . # Build context is the root directory
+      dockerfile: Dockerfile.client # Specify the client Dockerfile
+    ports:
+      - "80:80" # Map host port 80 to container port 80 (Nginx default)
+    restart: unless-stopped
+    depends_on:
+      - server # Ensure server starts before client (for API calls)
+    networks:
+      - bartender-net
+
+  # Backend Service (Node.js/Express API)
+  server:
+    build:
+      context: . # Build context is the root directory
+      dockerfile: Dockerfile.server # Specify the server Dockerfile
+    ports:
+      - "3001:3001" # Map host port 3001 to container port 3001
+    environment:
+      # Pass database connection string to the server container
+      # Uses the service name 'db' which Docker Compose resolves internally
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@db:5432/${POSTGRES_DB}
+      PORT: 3001 # Optional: Explicitly set the port the server should use inside the container
+      NODE_ENV: development # Or production
+    volumes:
+      # Optional: Mount server code for development hot-reloading (if using nodemon)
+      # - ./server:/usr/src/app
+      # Exclude node_modules to use the ones installed in the container
+      # - /usr/src/app/node_modules
+      # Mount .env file for sensitive credentials (ensure .env exists and is in .gitignore)
+      - ./server/.env:/usr/src/app/.env # Mount the .env file
+    depends_on:
+      db: # Ensure database is ready before server starts
+        condition: service_healthy # Wait for the DB health check
+    restart: unless-stopped
+    networks:
+      - bartender-net
+
+  # Database Service (PostgreSQL)
+  db:
+    image: postgres:15-alpine # Use official PostgreSQL image
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-bartender_db} # Use env var or default
+      POSTGRES_USER: ${POSTGRES_USER:-user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-password} # Use strong passwords in production!
+    volumes:
+      # Persist database data across container restarts
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      # Optional: Expose PostgreSQL port to host for direct access (e.g., with pgAdmin)
+      # Be cautious with this in production environments
+      - "5432:5432"
+    healthcheck:
+      # Check if the database is ready to accept connections
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-user} -d ${POSTGRES_DB:-bartender_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+    networks:
+      - bartender-net
+
+# Define Networks
+networks:
+  bartender-net:
+    driver: bridge # Default network driver
+
+# Define Volumes
+volumes:
+  postgres_data: # Named volume for database persistence

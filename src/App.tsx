@@ -41,13 +41,17 @@ import {
   faTimes,
   faSun,
   faMoon,
+  faSpinner,
 } from "@fortawesome/free-solid-svg-icons";
 
+// --- Configuration ---
+const API_BASE_URL = "/api"; // Use relative path
+
 // Types
-type Ingredient = { id: string; name: string };
+type Ingredient = { id: number; name: string };
 type RecipeIngredient = { name: string; quantity: string; unit: string };
 type Recipe = {
-  id: string;
+  id: number;
   name: string;
   ingredients: RecipeIngredient[];
   instructions: string;
@@ -57,7 +61,7 @@ type Recipe = {
 // Pre-populated standard recipes
 const STANDARD_RECIPES: Recipe[] = [
   {
-    id: "1",
+    id: -1,
     name: "Margarita",
     isCustom: false,
     ingredients: [
@@ -68,7 +72,7 @@ const STANDARD_RECIPES: Recipe[] = [
     instructions: "Shake with ice and strain into a salt-rimmed glass.",
   },
   {
-    id: "2",
+    id: -2,
     name: "Old Fashioned",
     isCustom: false,
     ingredients: [
@@ -81,14 +85,28 @@ const STANDARD_RECIPES: Recipe[] = [
 ];
 
 // State management
-type State = { ingredients: Ingredient[]; customRecipes: Recipe[] };
+type State = {
+  ingredients: Ingredient[];
+  customRecipes: Recipe[];
+  loading: boolean;
+  error: string | null;
+};
 type Action =
+  | { type: "SET_LOADING"; payload: boolean }
+  | { type: "SET_ERROR"; payload: string | null }
+  | { type: "SET_INGREDIENTS"; payload: Ingredient[] }
   | { type: "ADD_INGREDIENT"; payload: Ingredient }
-  | { type: "REMOVE_INGREDIENT"; payload: string }
+  | { type: "REMOVE_INGREDIENT"; payload: number }
+  | { type: "SET_RECIPES"; payload: Recipe[] }
   | { type: "ADD_RECIPE"; payload: Recipe }
-  | { type: "REMOVE_RECIPE"; payload: string };
+  | { type: "REMOVE_RECIPE"; payload: number };
 
-const initialState: State = { ingredients: [], customRecipes: [] };
+const initialState: State = {
+  ingredients: [],
+  customRecipes: [],
+  loading: true,
+  error: null,
+};
 const AppContext = createContext<{
   state: State;
   dispatch: React.Dispatch<Action>;
@@ -96,14 +114,28 @@ const AppContext = createContext<{
 
 const reducer = (state: State, action: Action): State => {
   switch (action.type) {
+    case "SET_LOADING":
+      return { ...state, loading: action.payload };
+    case "SET_ERROR":
+      return { ...state, error: action.payload, loading: false };
+    case "SET_INGREDIENTS":
+      return { ...state, ingredients: action.payload, loading: false };
     case "ADD_INGREDIENT":
+      if (state.ingredients.some((i) => i.id === action.payload.id)) {
+        return state;
+      }
       return { ...state, ingredients: [...state.ingredients, action.payload] };
     case "REMOVE_INGREDIENT":
       return {
         ...state,
         ingredients: state.ingredients.filter((i) => i.id !== action.payload),
       };
+    case "SET_RECIPES":
+      return { ...state, customRecipes: action.payload, loading: false };
     case "ADD_RECIPE":
+      if (state.customRecipes.some((r) => r.id === action.payload.id)) {
+        return state;
+      }
       return {
         ...state,
         customRecipes: [...state.customRecipes, action.payload],
@@ -118,29 +150,6 @@ const reducer = (state: State, action: Action): State => {
     default:
       return state;
   }
-};
-
-// Custom hooks
-const useLocalStorage = <T,>(key: string, initialValue: T) => {
-  const [value, setValue] = useState<T>(() => {
-    try {
-      const stored = localStorage.getItem(key);
-      return stored ? JSON.parse(stored) : initialValue;
-    } catch (error) {
-      console.error("Error reading localStorage key “" + key + "”:", error);
-      return initialValue;
-    }
-  });
-
-  useEffect(() => {
-    try {
-      localStorage.setItem(key, JSON.stringify(value));
-    } catch (error) {
-      console.error("Error setting localStorage key “" + key + "”:", error);
-    }
-  }, [key, value]);
-
-  return [value, setValue] as const;
 };
 
 const useRecipeFilter = (
@@ -177,22 +186,64 @@ const useRecipeFilter = (
 const IngredientManager: React.FC = () => {
   const { state, dispatch } = useContext(AppContext);
   const [newIngredient, setNewIngredient] = useState("");
+  const [isAdding, setIsAdding] = useState(false);
 
-  const addIngredient = (nameToAdd?: string) => {
+  const addIngredient = async (nameToAdd?: string) => {
     const ingredientName = (nameToAdd || newIngredient).trim();
+    if (!ingredientName) return;
+
     if (
-      ingredientName &&
-      !state.ingredients.some(
+      state.ingredients.some(
         (i) => i.name.toLowerCase() === ingredientName.toLowerCase()
       )
     ) {
-      dispatch({
-        type: "ADD_INGREDIENT",
-        payload: { id: Date.now().toString(), name: ingredientName },
+      console.warn("Ingredient likely already exists.");
+      if (!nameToAdd) setNewIngredient("");
+      return;
+    }
+
+    setIsAdding(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/ingredients`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: ingredientName }),
       });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || `Failed to add ingredient: ${response.statusText}`
+        );
+      }
+      const addedIngredient: Ingredient = await response.json();
+      dispatch({ type: "ADD_INGREDIENT", payload: addedIngredient });
       if (!nameToAdd) {
         setNewIngredient("");
       }
+    } catch (error: any) {
+      console.error("Error adding ingredient:", error);
+      alert(`Error: ${error.message}`);
+    } finally {
+      setIsAdding(false);
+    }
+  };
+
+  const removeIngredient = async (id: number) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/ingredients/${id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error ||
+            `Failed to delete ingredient: ${response.statusText}`
+        );
+      }
+      dispatch({ type: "REMOVE_INGREDIENT", payload: id });
+    } catch (error: any) {
+      console.error("Error deleting ingredient:", error);
+      alert(`Error: ${error.message}`);
     }
   };
 
@@ -242,13 +293,18 @@ const IngredientManager: React.FC = () => {
             onChange={(e) => setNewIngredient(e.target.value)}
             placeholder="Add new ingredient"
             onKeyPress={(e) => e.key === "Enter" && addIngredient()}
+            disabled={isAdding}
           />
-          <Button onClick={() => addIngredient()}>
-            <FontAwesomeIcon icon={faPlus} className="me-1" /> Add
+          <Button onClick={() => addIngredient()} disabled={isAdding}>
+            <FontAwesomeIcon
+              icon={isAdding ? faSpinner : faPlus}
+              spin={isAdding}
+              className="me-1"
+            />{" "}
+            Add
           </Button>
         </InputGroup>
 
-        {/* Ingredient Grid */}
         <div className="d-flex flex-wrap gap-2 mb-3">
           {state.ingredients.length > 0 ? (
             state.ingredients.map((ingredient) => (
@@ -264,12 +320,7 @@ const IngredientManager: React.FC = () => {
                   size="sm"
                   className="border-0 p-0"
                   style={{ lineHeight: 1 }}
-                  onClick={() =>
-                    dispatch({
-                      type: "REMOVE_INGREDIENT",
-                      payload: ingredient.id,
-                    })
-                  }
+                  onClick={() => removeIngredient(ingredient.id)}
                 >
                   <FontAwesomeIcon icon={faTrash} size="xs" />
                 </Button>
@@ -280,7 +331,6 @@ const IngredientManager: React.FC = () => {
           )}
         </div>
 
-        {/* Quick Select Section */}
         <div className="mb-3">
           <h6>Quick Select (Based on Recipes)</h6>
           <div style={{ maxHeight: "150px", overflowY: "auto" }}>
@@ -324,6 +374,7 @@ const RecipeCreator: React.FC<RecipeCreatorProps> = ({
   const [ingredients, setIngredients] = useState<RecipeIngredient[]>([
     { name: "", quantity: "", unit: "" },
   ]);
+  const [isSaving, setIsSaving] = useState(false);
 
   useEffect(() => {
     if (initialData) {
@@ -364,56 +415,66 @@ const RecipeCreator: React.FC<RecipeCreatorProps> = ({
     );
   };
 
-  const saveRecipe = () => {
+  const saveRecipe = async () => {
     if (
-      name &&
-      instructions &&
-      ingredients.every((i) => i.name && i.quantity)
+      !name ||
+      !instructions ||
+      !ingredients.some((i) => i.name && i.quantity)
     ) {
-      const validIngredients = ingredients.filter(
-        (i) => i.name || i.quantity || i.unit
+      alert(
+        "Please provide a recipe name, instructions, and at least one ingredient with name and quantity."
       );
+      return;
+    }
 
-      if (
-        validIngredients.length === 0 &&
-        ingredients.length > 0 &&
-        !(
-          ingredients.length === 1 &&
-          !ingredients[0].name &&
-          !ingredients[0].quantity &&
-          !ingredients[0].unit
-        )
-      ) {
-        console.warn("Attempted to save recipe with empty ingredient rows.");
-        return;
+    const validIngredients = ingredients
+      .map((ing) => ({
+        name: ing.name.trim(),
+        quantity: ing.quantity.trim(),
+        unit: ing.unit.trim(),
+      }))
+      .filter((ing) => ing.name && ing.quantity);
+
+    if (validIngredients.length === 0) {
+      alert("Please add at least one valid ingredient.");
+      return;
+    }
+
+    const recipeData = {
+      name: name.trim(),
+      instructions: instructions.trim(),
+      ingredients: validIngredients,
+    };
+
+    setIsSaving(true);
+    try {
+      const response = await fetch(`${API_BASE_URL}/recipes`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(recipeData),
+      });
+
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || `Failed to save recipe: ${response.statusText}`
+        );
       }
 
-      dispatch({
-        type: "ADD_RECIPE",
-        payload: {
-          id: Date.now().toString(),
-          name,
-          ingredients: validIngredients
-            .map((ing) => ({
-              name: ing.name.trim(),
-              quantity: ing.quantity.trim(),
-              unit: ing.unit.trim(),
-            }))
-            .filter((ing) => ing.name && ing.quantity),
-          instructions,
-          isCustom: true,
-        },
-      });
+      const savedRecipe: Recipe = await response.json();
+      dispatch({ type: "ADD_RECIPE", payload: savedRecipe });
+
       if (onClear) onClear();
       else {
         setName("");
         setInstructions("");
         setIngredients([{ name: "", quantity: "", unit: "" }]);
       }
-    } else {
-      console.warn(
-        "Recipe save failed: Missing name, instructions, or ingredient name/quantity."
-      );
+    } catch (error: any) {
+      console.error("Error saving recipe:", error);
+      alert(`Error: ${error.message}`);
+    } finally {
+      setIsSaving(false);
     }
   };
 
@@ -501,10 +562,19 @@ const RecipeCreator: React.FC<RecipeCreatorProps> = ({
             />
           </Form.Group>
           <Stack direction="horizontal" gap={2}>
-            <Button onClick={saveRecipe}>
-              <FontAwesomeIcon icon={faSave} className="me-1" /> Save Recipe
+            <Button onClick={saveRecipe} disabled={isSaving}>
+              <FontAwesomeIcon
+                icon={isSaving ? faSpinner : faSave}
+                spin={isSaving}
+                className="me-1"
+              />{" "}
+              Save Recipe
             </Button>
-            <Button variant="outline-secondary" onClick={handleClear}>
+            <Button
+              variant="outline-secondary"
+              onClick={handleClear}
+              disabled={isSaving}
+            >
               <FontAwesomeIcon icon={faEraser} className="me-1" /> Clear Form
             </Button>
           </Stack>
@@ -518,7 +588,10 @@ const RecipeBrowser: React.FC = () => {
   const { state } = useContext(AppContext);
   const [search, setSearch] = useState("");
   const [showMakeable, setShowMakeable] = useState(false);
-  const allRecipes = [...STANDARD_RECIPES, ...state.customRecipes];
+  const allRecipes = useMemo(
+    () => [...STANDARD_RECIPES, ...state.customRecipes],
+    [state.customRecipes]
+  );
   const filteredRecipes = useRecipeFilter(
     allRecipes,
     state.ingredients,
@@ -526,7 +599,6 @@ const RecipeBrowser: React.FC = () => {
     showMakeable
   );
 
-  // Helper to check ingredient availability (case-insensitive)
   const hasIngredient = useCallback((ingredientName: string): boolean => {
     return state.ingredients.some(
       (i) => i.name.toLowerCase() === ingredientName.toLowerCase()
@@ -621,6 +693,24 @@ const RecipeManager: React.FC<RecipeManagerProps> = ({ onEdit }) => {
     [state.customRecipes]
   );
 
+  const removeRecipe = async (id: number) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/recipes/${id}`, {
+        method: "DELETE",
+      });
+      if (!response.ok) {
+        const errorData = await response.json();
+        throw new Error(
+          errorData.error || `Failed to delete recipe: ${response.statusText}`
+        );
+      }
+      dispatch({ type: "REMOVE_RECIPE", payload: id });
+    } catch (error: any) {
+      console.error("Error deleting recipe:", error);
+      alert(`Error: ${error.message}`);
+    }
+  };
+
   return (
     <Card>
       <Card.Body>
@@ -655,9 +745,7 @@ const RecipeManager: React.FC<RecipeManagerProps> = ({ onEdit }) => {
                   <Button
                     variant="outline-danger"
                     size="sm"
-                    onClick={() =>
-                      dispatch({ type: "REMOVE_RECIPE", payload: recipe.id })
-                    }
+                    onClick={() => removeRecipe(recipe.id)}
                     title="Delete"
                   >
                     <FontAwesomeIcon icon={faTrash} />
@@ -705,30 +793,53 @@ const Backroom: React.FC = () => {
 };
 
 const App: React.FC = () => {
-  // Theme state
-  const [theme, setTheme] = useLocalStorage<"light" | "dark">(
-    "bartenderTheme",
-    "light"
-  );
+  const [theme, setTheme] = useState<"light" | "dark">(() => {
+    return (localStorage.getItem("bartenderTheme") as "light" | "dark") || "light";
+  });
 
-  // Apply theme to HTML element
   useEffect(() => {
     document.documentElement.setAttribute("data-bs-theme", theme);
+    localStorage.setItem("bartenderTheme", theme);
   }, [theme]);
 
   const toggleTheme = () => {
     setTheme(theme === "light" ? "dark" : "light");
   };
 
-  const [storedState, setStoredState] = useLocalStorage(
-    "bartenderState",
-    initialState
-  );
-  const [state, dispatch] = useReducer(reducer, storedState);
+  const [state, dispatch] = useReducer(reducer, initialState);
 
   useEffect(() => {
-    setStoredState(state);
-  }, [state, setStoredState]);
+    const fetchData = async () => {
+      dispatch({ type: "SET_LOADING", payload: true });
+      dispatch({ type: "SET_ERROR", payload: null });
+      try {
+        const [ingredientsRes, recipesRes] = await Promise.all([
+          fetch(`${API_BASE_URL}/ingredients`),
+          fetch(`${API_BASE_URL}/recipes`),
+        ]);
+
+        if (!ingredientsRes.ok) {
+          throw new Error(
+            `Failed to fetch ingredients: ${ingredientsRes.statusText}`
+          );
+        }
+        if (!recipesRes.ok) {
+          throw new Error(`Failed to fetch recipes: ${recipesRes.statusText}`);
+        }
+
+        const ingredientsData: Ingredient[] = await ingredientsRes.json();
+        const recipesData: Recipe[] = await recipesRes.json();
+
+        dispatch({ type: "SET_INGREDIENTS", payload: ingredientsData });
+        dispatch({ type: "SET_RECIPES", payload: recipesData });
+      } catch (error: any) {
+        console.error("Error fetching initial data:", error);
+        dispatch({ type: "SET_ERROR", payload: error.message });
+      }
+    };
+
+    fetchData();
+  }, []);
 
   return (
     <AppContext.Provider value={{ state, dispatch }}>
@@ -748,28 +859,47 @@ const App: React.FC = () => {
       </Navbar>
 
       <Container className="py-4">
-        <Tabs defaultActiveKey="bar" className="mb-4" fill>
-          <Tab
-            eventKey="bar"
-            title={
-              <span>
-                <FontAwesomeIcon icon={faWhiskeyGlass} className="me-1" /> Bar
-              </span>
-            }
-          >
-            <RecipeBrowser />
-          </Tab>
-          <Tab
-            eventKey="backroom"
-            title={
-              <span>
-                <FontAwesomeIcon icon={faWarehouse} className="me-1" /> Backroom
-              </span>
-            }
-          >
-            <Backroom />
-          </Tab>
-        </Tabs>
+        {state.loading && (
+          <div className="text-center my-5">
+            <FontAwesomeIcon icon={faSpinner} spin size="3x" />
+            <p className="mt-2">Loading data...</p>
+          </div>
+        )}
+
+        {state.error && !state.loading && (
+          <div className="alert alert-danger" role="alert">
+            <strong>Error:</strong> {state.error} <br />
+            Please ensure the backend server is running and accessible at{" "}
+            <code>{API_BASE_URL}</code>. You might need to refresh the page
+            once the server is ready.
+          </div>
+        )}
+
+        {!state.loading && !state.error && (
+          <Tabs defaultActiveKey="bar" className="mb-4" fill>
+            <Tab
+              eventKey="bar"
+              title={
+                <span>
+                  <FontAwesomeIcon icon={faWhiskeyGlass} className="me-1" /> Bar
+                </span>
+              }
+            >
+              <RecipeBrowser />
+            </Tab>
+            <Tab
+              eventKey="backroom"
+              title={
+                <span>
+                  <FontAwesomeIcon icon={faWarehouse} className="me-1" />{" "}
+                  Backroom
+                </span>
+              }
+            >
+              <Backroom />
+            </Tab>
+          </Tabs>
+        )}
       </Container>
     </AppContext.Provider>
   );
